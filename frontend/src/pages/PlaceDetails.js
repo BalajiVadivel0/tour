@@ -14,6 +14,23 @@ import {
 import { PieChart, Pie, Cell, Tooltip, Legend } from "recharts";
 import ReviewForm from "../components/ReviewForm";
 
+// Leaflet
+import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
+import L from "leaflet";
+
+// Fix Leaflet marker icons
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl:
+    "https://unpkg.com/leaflet@1.9.3/dist/images/marker-icon-2x.png",
+  iconUrl: "https://unpkg.com/leaflet@1.9.3/dist/images/marker-icon.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.3/dist/images/marker-shadow.png"
+});
+
+// ✅ Your OpenTripMap API Key
+const OPENTRIPMAP_API_KEY = "5ae2e3f221c38a28845f05b68d340359b87dc2abe31b800f212b011e";
+
 export default function PlaceDetails() {
   const { name } = useParams();
   const [place, setPlace] = useState(null);
@@ -21,8 +38,32 @@ export default function PlaceDetails() {
   useEffect(() => {
     const fetchPlace = async () => {
       try {
+        // First, get place details from your backend
         const res = await API.get(`/places/search/full?name=${name}`);
-        setPlace(res.data);
+        let placeData = res.data;
+
+        // Then, get more details from OpenTripMap
+        const otmRes = await fetch(
+          `https://api.opentripmap.com/0.1/en/places/geoname?name=${encodeURIComponent(
+            name
+          )}&apikey=${OPENTRIPMAP_API_KEY}`
+        );
+        const otmData = await otmRes.json();
+
+        if (otmData && otmData.lat && otmData.lon) {
+          placeData = {
+            ...placeData,
+            location: {
+              lat: otmData.lat,
+              lng: otmData.lon,
+              city: otmData.name,
+              country: otmData.country
+            },
+            description: placeData.description || otmData.wiki_extracts?.text || "No description available."
+          };
+        }
+
+        setPlace(placeData);
       } catch (err) {
         console.error("Error fetching place details:", err);
       }
@@ -38,6 +79,28 @@ export default function PlaceDetails() {
     { name: "Negative", value: place.summary?.negative || 0 },
     { name: "Neutral", value: place.summary?.neutral || 0 }
   ];
+
+  // Label with percentage
+  const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
+    const RADIAN = Math.PI / 180;
+    const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
+    const x = cx + radius * Math.cos(-midAngle * RADIAN);
+    const y = cy + radius * Math.sin(-midAngle * RADIAN);
+
+    return (
+      <text
+        x={x}
+        y={y}
+        fill="white"
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={14}
+        fontWeight="bold"
+      >
+        {`${(percent * 100).toFixed(0)}%`}
+      </text>
+    );
+  };
 
   return (
     <Container sx={{ mt: 4, mb: 6 }}>
@@ -64,7 +127,7 @@ export default function PlaceDetails() {
       {/* Description */}
       <Divider sx={{ my: 4 }} />
       <Typography variant="h5" gutterBottom>Description</Typography>
-      <Typography variant="body1">{place.description || "No description available."}</Typography>
+      <Typography variant="body1">{place.description}</Typography>
 
       {/* Weather */}
       {place.weather && (
@@ -80,13 +143,16 @@ export default function PlaceDetails() {
       {place.location && (
         <Box sx={{ mt: 4 }}>
           <Typography variant="h6">📍 Location</Typography>
-          <iframe
-            title="map"
-            width="100%"
-            height="350"
-            style={{ marginTop: "10px", borderRadius: "12px" }}
-            src={`https://www.openstreetmap.org/export/embed.html?bbox=${place.location.lng - 0.01},${place.location.lat - 0.01},${place.location.lng + 0.01},${place.location.lat + 0.01}&layer=mapnik&marker=${place.location.lat},${place.location.lng}`}
-          />
+          <MapContainer
+            center={[place.location.lat, place.location.lng]}
+            zoom={13}
+            style={{ height: "400px", width: "100%", marginTop: "10px", borderRadius: "12px" }}
+          >
+            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <Marker position={[place.location.lat, place.location.lng]}>
+              <Popup>{place.name}</Popup>
+            </Marker>
+          </MapContainer>
         </Box>
       )}
 
@@ -101,7 +167,7 @@ export default function PlaceDetails() {
             cx="50%"
             cy="50%"
             outerRadius={100}
-            label
+            label={renderCustomizedLabel}
           >
             {sentimentData.map((entry, index) => (
               <Cell key={index} fill={COLORS[index]} />
